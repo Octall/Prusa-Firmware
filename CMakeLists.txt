@@ -601,40 +601,15 @@ endfunction()
 
 if(CMAKE_CROSSCOMPILING)
 
-  # Main target for language checks
+  # Language check targets (still needed by fw_add_variant internals)
   add_custom_target(check_lang)
   foreach(LANG IN LISTS SELECTED_LANGUAGES)
     add_custom_target(check_lang_${LANG})
     add_dependencies(check_lang check_lang_${LANG})
   endforeach()
 
-  # build a list of all supported variants
-  file(
-    GLOB ALL_VARIANTS
-    RELATIVE ${PROJECT_SOURCE_DIR}/Firmware/variants
-    ${PROJECT_SOURCE_DIR}/Firmware/variants/*.h
-    )
-  list(TRANSFORM ALL_VARIANTS REPLACE "\.h$" "")
-  set(FW_VARIANTS
-      ${ALL_VARIANTS}
-      CACHE STRING "Firmware variants to be built"
-      )
+  fw_add_variant(MK3S-E3DREVO)
 
-  foreach(THIS_VAR IN LISTS FW_VARIANTS)
-    if(NOT ${THIS_VAR} IN_LIST ALL_VARIANTS)
-      message(FATAL_ERROR "Variant ${THIS_VAR} does not exist")
-    endif()
-
-    message("Variant added: ${THIS_VAR}")
-
-    # Generate a file in a subfolder so that we can organize things a little more neatly in VS code
-    set(DIR_NAME ${THIS_VAR})
-    file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/build_gen/${DIR_NAME})
-    file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/build_gen/${DIR_NAME}/CMakeLists.txt
-         "project(${DIR_NAME} VERSION ${PROJECT_VERSION})\nfw_add_variant(${THIS_VAR})"
-         )
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/build_gen/${DIR_NAME})
-  endforeach(THIS_VAR IN LISTS FW_VARIANTS)
 endif()
 
 SET(REVO_FW_ZIP_NAME "E3D_REVO_FW_MK3_MK3S_MK3S+_${FN_VERSION_SUFFIX}.zip")
