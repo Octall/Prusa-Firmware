@@ -25,11 +25,12 @@ static uint8_t cmd_len = 0;
 // ---------------------------------------------------------------------------
 // Helper: send OK or ERROR over serial
 // ---------------------------------------------------------------------------
-static void reply_ok()    { MYSERIAL.println("OK"); }
+static void reply_ok()    { MYSERIAL.print("OK\r\n"); }
 static void reply_error(const char *reason)
 {
     MYSERIAL.print("ERROR ");
-    MYSERIAL.println(reason);
+    MYSERIAL.print(reason);
+    MYSERIAL.print("\r\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -145,12 +146,14 @@ static void cmd_read(const char *args)
     if (starts_with_ci(args, "IR"))
     {
         MYSERIAL.print("VALUE ");
-        MYSERIAL.println(sensor_read_ir() ? 1 : 0);
+        MYSERIAL.print(sensor_read_ir() ? 1 : 0);
+        MYSERIAL.print("\r\n");
     }
     else if (starts_with_ci(args, "PINDA"))
     {
         MYSERIAL.print("VALUE ");
-        MYSERIAL.println(sensor_read_pinda() ? 1 : 0);
+        MYSERIAL.print(sensor_read_pinda() ? 1 : 0);
+        MYSERIAL.print("\r\n");
     }
     else if (starts_with_ci(args, "ENDSTOP"))
     {
@@ -159,22 +162,26 @@ static void cmd_read(const char *args)
         if (toupper((uint8_t)*axis) == 'X')
         {
             MYSERIAL.print("VALUE ");
-            MYSERIAL.println(sensor_read_endstop_x() ? 1 : 0);
+            MYSERIAL.print(sensor_read_endstop_x() ? 1 : 0);
+            MYSERIAL.print("\r\n");
         }
         else if (toupper((uint8_t)*axis) == 'Y')
         {
             MYSERIAL.print("VALUE ");
-            MYSERIAL.println(sensor_read_endstop_y() ? 1 : 0);
+            MYSERIAL.print(sensor_read_endstop_y() ? 1 : 0);
+            MYSERIAL.print("\r\n");
         }
         else if (toupper((uint8_t)*axis) == 'Z')
         {
             MYSERIAL.print("VALUE ");
-            MYSERIAL.println(sensor_read_endstop_z() ? 1 : 0);
+            MYSERIAL.print(sensor_read_endstop_z() ? 1 : 0);
+            MYSERIAL.print("\r\n");
         }
         else // ALL or unspecified
         {
             MYSERIAL.print("VALUE ");
-            MYSERIAL.println(sensor_read_endstops_all());
+            MYSERIAL.print(sensor_read_endstops_all());
+            MYSERIAL.print("\r\n");
         }
     }
     else
@@ -192,7 +199,7 @@ static void cmd_status(const char *)
     MYSERIAL.print(" X"); MYSERIAL.print(motion_get_position_mm(0), 2);
     MYSERIAL.print(" Y"); MYSERIAL.print(motion_get_position_mm(1), 2);
     MYSERIAL.print(" Z"); MYSERIAL.print(motion_get_position_mm(2), 2);
-    MYSERIAL.print(" E"); MYSERIAL.println(motion_get_position_mm(3), 2);
+    MYSERIAL.print(" E"); MYSERIAL.print(motion_get_position_mm(3), 2); MYSERIAL.print("\r\n");
 
     MYSERIAL.print("SENSOR IR=");
     MYSERIAL.print(sensor_read_ir() ? 1 : 0);
@@ -203,8 +210,24 @@ static void cmd_status(const char *)
     MYSERIAL.print(" ENDSTOP_Y=");
     MYSERIAL.print(sensor_read_endstop_y() ? 1 : 0);
     MYSERIAL.print(" ENDSTOP_Z=");
-    MYSERIAL.println(sensor_read_endstop_z() ? 1 : 0);
+    MYSERIAL.print(sensor_read_endstop_z() ? 1 : 0);
+    MYSERIAL.print("\r\n");
 
+    reply_ok();
+}
+
+static void cmd_rotate(const char *args)
+{
+    float deg = parse_arg('D', args);
+    float f   = parse_arg('F', args);
+
+    if (isnan(deg))
+    {
+        reply_error("missing D<degrees>");
+        return;
+    }
+
+    motion_rotate_x_deg(deg, isnan(f) ? 0.0f : f);
     reply_ok();
 }
 
@@ -242,6 +265,7 @@ static void dispatch(char *line)
 
     if      (strcmp(line, "HOME")   == 0) cmd_home(args);
     else if (strcmp(line, "MOVE")   == 0) cmd_move(args);
+    else if (strcmp(line, "ROTATE") == 0) cmd_rotate(args);
     else if (strcmp(line, "WAIT")   == 0) cmd_wait(args);
     else if (strcmp(line, "ESTOP")  == 0) cmd_estop(args);
     else if (strcmp(line, "ENABLE") == 0) cmd_enable(args);
@@ -271,7 +295,7 @@ void command_process()
         {
             if (cmd_len > 0)
             {
-                MYSERIAL.println(); // echo newline so cursor moves to next line
+                MYSERIAL.print("\r\n"); // echo newline so cursor moves to next line
                 cmd_buf[cmd_len] = '\0';
                 dispatch(cmd_buf);
                 cmd_len = 0;

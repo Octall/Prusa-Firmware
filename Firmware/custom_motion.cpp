@@ -27,6 +27,9 @@ static float current_pos[NUM_AXIS] = {0.0f, 0.0f, 0.0f, 0.0f};
 // Feedrate used internally when not specified (mm/min)
 #define DEFAULT_MOVE_FEEDRATE  3000.0f
 
+// NEMA17 1.8°/step motor: 200 full steps per revolution
+#define X_MOTOR_FULL_STEPS_PER_REV  200
+
 // Back-off distance after hitting an endstop during homing (mm)
 #define HOMING_BACKOFF_MM  2.0f
 
@@ -106,7 +109,8 @@ static void home_single_axis(uint8_t axis)
     for (uint8_t i = 0; i < NUM_AXIS; i++)
         steps[i] = lround(current_pos[i] * cs.axis_steps_per_mm[i]);
     st_set_position(steps);
-    plan_set_position_curposXYZE();
+    plan_set_position(current_pos[X_AXIS], current_pos[Y_AXIS],
+                     current_pos[Z_AXIS], current_pos[E_AXIS]);
 }
 
 void motion_home(uint8_t axes_mask)
@@ -134,6 +138,28 @@ void motion_move(float x_mm, float y_mm, float z_mm, float e_mm,
                      current_pos[Z_AXIS], current_pos[E_AXIS],
                      feedrate_mm_min / 60.0f,  // planner wants mm/s
                      0 /*extruder*/);
+}
+
+// ---------------------------------------------------------------------------
+
+void motion_rotate_x(float delta_mm, float feedrate_mm_min)
+{
+    if (feedrate_mm_min <= 0.0f) feedrate_mm_min = homing_feedrate[X_AXIS];
+    current_pos[X_AXIS] += delta_mm;
+    plan_buffer_line(current_pos[X_AXIS], current_pos[Y_AXIS],
+                     current_pos[Z_AXIS], current_pos[E_AXIS],
+                     feedrate_mm_min / 60.0f,
+                     0 /*extruder*/);
+}
+
+void motion_rotate_x_deg(float degrees, float feedrate_mm_min)
+{
+    // 3200 microsteps/rev (NEMA17 200 full steps × 16× TMC2130 microstepping)
+    // divided by axis_steps_per_mm gives mm per degree
+    const float steps_per_deg =
+        (X_MOTOR_FULL_STEPS_PER_REV * (float)TMC2130_USTEPS_XY) / 360.0f;
+    const float delta_mm = degrees * steps_per_deg / cs.axis_steps_per_mm[X_AXIS];
+    motion_rotate_x(delta_mm, feedrate_mm_min);
 }
 
 // ---------------------------------------------------------------------------

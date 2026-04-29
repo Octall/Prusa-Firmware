@@ -45,6 +45,23 @@ void motion_move(float x_mm, float y_mm, float z_mm, float e_mm,
                  float feedrate_mm_min);
 
 /**
+ * Rotate the X axis by a relative amount at the specified feedrate.
+ * Calls with the same delta_mm accumulate correctly (relative, not absolute).
+ * @param delta_mm        signed distance in mm (positive = away from home)
+ * @param feedrate_mm_min travel speed in mm/min; 0 uses the X homing feedrate
+ */
+void motion_rotate_x(float delta_mm, float feedrate_mm_min = 0.0f);
+
+/**
+ * Rotate the X axis by a relative angle using motor-degree units.
+ * Converts degrees to mm via the NEMA17 motor parameters and axis_steps_per_mm.
+ * Accumulates correctly across repeated calls (relative, not absolute).
+ * @param degrees         signed angle in degrees (positive = away from home)
+ * @param feedrate_mm_min travel speed in mm/min; 0 uses the X homing feedrate
+ */
+void motion_rotate_x_deg(float degrees, float feedrate_mm_min = 0.0f);
+
+/**
  * Block until the motion buffer is empty (all queued moves complete).
  */
 void motion_wait();
