@@ -202,78 +202,31 @@ endif()
 # Firmware - get file lists.
 #
 set(FW_SOURCES
+    # --- Core hardware drivers (retained from Marlin) ---
     adc.cpp
-    backlight.cpp
-    BlinkM.cpp
-    bootapp.c
-    cardreader.cpp
-    cmdqueue.cpp
-    Configuration.cpp
-    ConfigurationStore.cpp
-    Dcodes.cpp
-    eeprom.cpp
-    fancheck.cpp
-    Filament_sensor.cpp
-    first_lay_cal.cpp
-    heatbed_pwm.cpp
-    host.cpp
-    la10compat.cpp
-    language.c
     lcd.cpp
-    Marlin_main.cpp
     MarlinSerial.cpp
-    meatpack.cpp
-    menu.cpp
-    mesh_bed_calibration.cpp
-    mesh_bed_leveling.cpp
-    messages.cpp
-    mmu2.cpp
-    mmu2_crc.cpp
-    mmu2_error_converter.cpp
-    mmu2_fsensor.cpp
-    mmu2_log.cpp
-    mmu2_marlin1.cpp
-    mmu2_power.cpp
-    mmu2_progress_converter.cpp
-    mmu2_protocol.cpp
-    mmu2_protocol_logic.cpp
-    mmu2_reporting.cpp
-    mmu2_serial.cpp
     motion_control.cpp
-    optiboot_xflash.cpp
-    pat9125.cpp
     planner.cpp
-    power_panic.cpp
     printer_state.cpp
-    Prusa_farm.cpp
     rbuf.c
-    Sd2Card.cpp
-    SdBaseFile.cpp
-    SdFatUtil.cpp
-    SdFile.cpp
-    SdVolume.cpp
-    sm4.cpp
     sound.cpp
     speed_lookuptable.cpp
     spi.c
-    SpoolJoin.cpp
     stepper.cpp
-    stopwatch.cpp
     strtod.c
-    swi2c.c
-    Tcodes.cpp
-    temperature.cpp
     timer02.c
     Timer.cpp
     tmc2130.cpp
     tone04.c
-    twi.cpp
-    uart2.cpp
-    ultralcd.cpp
-    util.cpp
-    xflash.c
-    xflash_dump.cpp
-    xyzcal.cpp
+
+    # --- ToolIndexer custom application layer ---
+    custom_main.cpp
+    custom_stubs.cpp
+    custom_sensor.cpp
+    custom_display.cpp
+    custom_motion.cpp
+    custom_command.cpp
     )
 list(TRANSFORM FW_SOURCES PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/Firmware/)
 
@@ -608,7 +561,7 @@ if(CMAKE_CROSSCOMPILING)
     add_dependencies(check_lang check_lang_${LANG})
   endforeach()
 
-  fw_add_variant(MK3S-E3DREVO)
+  fw_add_variant(ToolIndexer)
 
 endif()
 
