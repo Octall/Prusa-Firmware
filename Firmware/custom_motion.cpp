@@ -154,12 +154,49 @@ void motion_rotate_x(float delta_mm, float feedrate_mm_min)
 
 void motion_rotate_x_deg(float degrees, float feedrate_mm_min)
 {
-    // 3200 microsteps/rev (NEMA17 200 full steps × 16× TMC2130 microstepping)
-    // divided by axis_steps_per_mm gives mm per degree
-    const float steps_per_deg =
-        (X_MOTOR_FULL_STEPS_PER_REV * (float)TMC2130_USTEPS_XY) / 360.0f;
-    const float delta_mm = degrees * steps_per_deg / cs.axis_steps_per_mm[X_AXIS];
-    motion_rotate_x(delta_mm, feedrate_mm_min);
+    if (feedrate_mm_min <= 0.0f) feedrate_mm_min = homing_feedrate[X_AXIS];
+
+    // Steps = degrees × (steps per revolution / 360)
+    // NEMA17 1.8° motor: 200 full steps × 16× microstepping = 3200 steps/rev
+    const long steps = lround(
+        fabsf(degrees) * ((float)X_MOTOR_FULL_STEPS_PER_REV * TMC2130_USTEPS_XY) / 360.0f);
+    if (steps == 0) return;
+
+    // Step half-period in μs, derived from feedrate and hardcoded X steps/mm (100).
+    // Using a compile-time constant here intentionally avoids any EEPROM dependency
+    // that could silently produce a near-zero delta_mm and stall the planner.
+    const float steps_per_sec = (feedrate_mm_min / 60.0f) * 100.0f;
+    const uint16_t half_us = (uint16_t)constrain(500000.0f / steps_per_sec, 2.0f, 65535.0f);
+
+    // Drain any queued planner moves, then take direct control of the step/dir pins.
+    st_synchronize();
+    DISABLE_STEPPER_DRIVER_INTERRUPT();
+
+    // Positive degrees = away from home endstop (INVERT_X_DIR = 1 on ToolIndexer)
+    WRITE(X_DIR_PIN, degrees > 0.0f ? !INVERT_X_DIR : INVERT_X_DIR);
+    delayMicroseconds(2); // TMC2130 minimum DIR setup time before first step
+
+    for (long i = 0; i < steps; i++) {
+        WRITE(X_STEP_PIN, !INVERT_X_STEP_PIN); // rising edge → TMC2130 advances one microstep
+        delayMicroseconds(half_us);
+        WRITE(X_STEP_PIN, INVERT_X_STEP_PIN);
+        delayMicroseconds(half_us);
+    }
+
+    // Bring planner and stepper position counters in sync with the physical move.
+    float spm = cs.axis_steps_per_mm[X_AXIS];
+    if (spm < 1.0f) spm = 100.0f; // guard against uninitialised EEPROM
+    current_pos[X_AXIS] += degrees
+        * ((float)X_MOTOR_FULL_STEPS_PER_REV * TMC2130_USTEPS_XY)
+        / (360.0f * spm);
+    long sp[NUM_AXIS];
+    for (uint8_t i = 0; i < NUM_AXIS; i++)
+        sp[i] = lround(current_pos[i] * cs.axis_steps_per_mm[i]);
+    st_set_position(sp);
+    plan_set_position(current_pos[X_AXIS], current_pos[Y_AXIS],
+                      current_pos[Z_AXIS], current_pos[E_AXIS]);
+
+    ENABLE_STEPPER_DRIVER_INTERRUPT();
 }
 
 // ---------------------------------------------------------------------------
