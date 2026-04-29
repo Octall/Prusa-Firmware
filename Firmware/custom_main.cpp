@@ -54,53 +54,82 @@ static void watchdog_early_disable()
 // ---------------------------------------------------------------------------
 void setup()
 {
-    // 1. Disable watchdog (must be first)
+    // Disable Timer0 and Timer1 interrupts immediately.
+    //
+    // Timer0: The Arduino core's init() enables TIMER0_OVF interrupt and calls
+    // sei() BEFORE setup() runs. heatbed_pwm.cpp (removed from this build) owns
+    // the TIMER0_OVF ISR; without it, overflow fires __bad_interrupt → soft
+    // reset. A no-op ISR stub in custom_stubs.cpp covers the race window
+    // between init() and here; we then kill Timer0 interrupts entirely since
+    // we don't need them.
+    //
+    // Timer1: used for the stepper ISR; may still be armed from the bootloader.
+    // st_init() re-enables it after proper initialisation.
+    TIMSK0 = 0;
+    TIMSK1 = 0;
+
+    // Serial first — maximises chance of output even if a reset follows immediately
+    MYSERIAL.begin(BAUDRATE);
+    MYSERIAL.println("DBG:0");      // confirm serial works at all
+
+    // 1. Disable watchdog (must be very early)
     watchdog_early_disable();
+    MYSERIAL.println("DBG:1");      // WDT disabled
 
     // 2. System timer — enables millis() / _millis()
     timer2_init();
+    MYSERIAL.println("DBG:2");      // Timer2 OK
 
     // 3. SPI — needed by TMC2130
     spi_init();
+    MYSERIAL.println("DBG:3");      // SPI OK
 
     // 4. LCD hardware — display a boot message immediately
     lcd_init();
+    MYSERIAL.println("DBG:4");      // LCD hw OK
+
     lcd_refresh();
     lcd_set_cursor(0, 0);
     lcd_puts_P(PSTR("ToolIndexer v1.0    "));
     lcd_set_cursor(0, 1);
     lcd_puts_P(PSTR("Booting...          "));
+    MYSERIAL.println("DBG:5");      // LCD text written
 
-    // 5. Serial — host communication at 115200 baud
-    MYSERIAL.begin(BAUDRATE);
-
-    // 6. ADC — sets up multiplexer; raw values used by adc.h consumers
+    // 5. ADC — sets up multiplexer; raw values used by adc.h consumers
     adc_init();
     adc_start_cycle();
+    MYSERIAL.println("DBG:6");      // ADC OK
 
-    // 7. Sound
+    // 6. Sound
     Sound_Init();
+    MYSERIAL.println("DBG:7");      // Sound OK
 
-    // 8. Motion planner — clear ring buffer and reset position state
+    // 7. Motion planner — clear ring buffer and reset position state
     motion_init();   // calls plan_init() internally + sets position to 0
+    MYSERIAL.println("DBG:8");      // Planner OK
 
-    // 9. TMC2130 stepper drivers
+    // 8. TMC2130 stepper drivers
     //    Mode: NORMAL (spread cycle), no farm mode, no E-cool
     tmc2130_mode = TMC2130_MODE_NORMAL;
     tmc2130_init(TMCInitParams(false /*bSuppressFlag*/, false /*enableECool*/));
+    MYSERIAL.println("DBG:9");      // TMC2130 OK
 
-    // 10. Stepper ISR — enables Timer1 COMPA interrupt
-    //     Must come after TMC2130 so drivers are configured before first step
+    // 9. Stepper ISR — enables Timer1 COMPA interrupt
+    //    Must come after TMC2130 so drivers are configured before first step
     st_init();
+    MYSERIAL.println("DBG:10");     // Stepper ISR OK
 
-    // 11. Sensors — configure GPIO inputs
+    // 10. Sensors — configure GPIO inputs
     sensor_init();
+    MYSERIAL.println("DBG:11");     // Sensors OK
 
-    // 12. Display — register update callback with lcd.cpp
+    // 11. Display — register update callback with lcd.cpp
     display_init();
+    MYSERIAL.println("DBG:12");     // Display callback OK
 
-    // 13. Command parser
+    // 12. Command parser
     command_init();
+    MYSERIAL.println("DBG:13");     // Command parser OK
 
     // Ready
     display_set_status("ToolIndexer Ready");

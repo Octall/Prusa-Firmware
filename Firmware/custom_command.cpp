@@ -271,14 +271,24 @@ void command_process()
         {
             if (cmd_len > 0)
             {
+                MYSERIAL.println(); // echo newline so cursor moves to next line
                 cmd_buf[cmd_len] = '\0';
                 dispatch(cmd_buf);
                 cmd_len = 0;
             }
         }
+        else if (c == '\b' || c == 0x7F) // backspace or DEL
+        {
+            if (cmd_len > 0)
+            {
+                cmd_len--;
+                MYSERIAL.print("\b \b"); // move back, erase, move back again
+            }
+        }
         else if (cmd_len < CMD_BUF_LEN - 1)
         {
             cmd_buf[cmd_len++] = c;
+            MYSERIAL.write(c); // echo character so it appears in the terminal
         }
         else
         {

@@ -17,6 +17,19 @@
 #include "temperature.h"
 #include "ConfigurationStore.h"
 #include "fancheck.h"
+#include <avr/interrupt.h>
+
+// ---------------------------------------------------------------------------
+// Timer0 OVF stub
+//
+// heatbed_pwm.cpp owns ISR(TIMER0_OVF_vect) in the full Marlin build.
+// We removed that file, but the Arduino core's init() unconditionally enables
+// the Timer0 OVF interrupt (TIMSK0 |= TOIE0) and calls sei() before setup()
+// runs. Without an ISR, the first Timer0 overflow calls __bad_interrupt which
+// soft-resets the MCU. Provide a no-op ISR so overflow is harmless until
+// setup() can clear TIMSK0.
+// ---------------------------------------------------------------------------
+ISR(TIMER0_OVF_vect) {}
 
 /* -----------------------------------------------------------------------
  * Temperature globals (required by FORCE_INLINE functions in temperature.h

@@ -17,6 +17,7 @@
 #include "Marlin.h"
 #include "stepper.h"
 #include "planner.h"
+#include "tmc2130.h"
 #include "ConfigurationStore.h"
 #include <math.h>
 
@@ -36,6 +37,12 @@ void motion_init()
 {
     plan_init();
 
+    // Compute max_acceleration_steps_per_s2[] from cs.max_acceleration_mm_per_s2
+    // and cs.axis_steps_per_mm. plan_init() does NOT do this — without it the
+    // planner uses zero acceleration, resulting in extremely slow motion.
+    // update_mode_profile() also selects normal vs silent feedrate/accel arrays.
+    update_mode_profile();
+
     // Set planner position to 0 on all axes
     long zero[NUM_AXIS] = {0, 0, 0, 0};
     st_set_position(zero);
@@ -53,14 +60,20 @@ static void home_single_axis(uint8_t axis)
     const float fast_rate = homing_feedrate[axis];  // mm/min
     if (fast_rate <= 0.0f) return;                  // E axis skipped
 
-    // Step 1: drive toward min endstop
+    // Step 1: configure TMC2130 stallGuard for this axis and enable endstop
+    // checking in the stepper ISR. With TMC2130_SG_HOMING defined, the ISR
+    // substitutes the TMC2130 DIAG pin (stall output) for the physical endstop
+    // pin on axes whose bit is set in tmc2130_sg_homing_axes_mask.
+    const uint8_t axis_mask = (1 << axis);
+    tmc2130_home_enter(axis_mask);
     enable_endstops(true);
 
-    // Move a large negative distance — the endstop will stop us
+    // Step 2: drive a distance larger than the axis travel toward the stop.
+    // The stallGuard stall triggers the DIAG pin, the ISR treats it as an
+    // endstop hit and aborts the block — st_synchronize() then returns.
     float target[NUM_AXIS];
     for (uint8_t i = 0; i < NUM_AXIS; i++) target[i] = current_pos[i];
 
-    // Choose a distance guaranteed to exceed axis travel
     const float travel[NUM_AXIS] = {
         (float)(X_MAX_POS - X_MIN_POS + 10),
         (float)(Y_MAX_POS - Y_MIN_POS + 10),
@@ -75,8 +88,11 @@ static void home_single_axis(uint8_t axis)
                      0 /*extruder*/);
     st_synchronize();
 
-    // Step 2: back off
+    // Step 3: restore normal TMC2130 operation and disable endstop checking.
+    tmc2130_home_exit();
     enable_endstops(false);
+
+    // Step 4: back off so the motor is no longer stalled.
     target[axis] = current_pos[axis] + HOMING_BACKOFF_MM;
     plan_buffer_line(target[X_AXIS], target[Y_AXIS],
                      target[Z_AXIS], target[E_AXIS],
@@ -84,7 +100,7 @@ static void home_single_axis(uint8_t axis)
                      0);
     st_synchronize();
 
-    // Step 3: declare home
+    // Step 5: declare home — axis is at position 0.
     current_pos[axis] = 0.0f;
     long steps[NUM_AXIS];
     for (uint8_t i = 0; i < NUM_AXIS; i++)
