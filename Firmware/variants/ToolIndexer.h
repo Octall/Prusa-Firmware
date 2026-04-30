@@ -31,8 +31,11 @@
  * --------------------------------------------------- */
 #define NUM_AXIS 4  // X, Y, Z, E
 
-// Steps per mm (MK3S stock values)
-#define DEFAULT_AXIS_STEPS_PER_UNIT   {100, 100, 3200/8, 280}
+// X axis: steps per DEGREE (motor steps × microsteps × gear-ratio / 360).
+// Calibrate by running ROTATE D<large> and measuring physical angle:
+//   steps_per_deg = command_value × (200 × 16 / 360) / measured_degrees
+// Empirical value from D2000 ≈ 60°: 2000 × 8.889 / 60 ≈ 296
+#define DEFAULT_AXIS_STEPS_PER_UNIT   {143, 100, 3200/8, 280}
 
 // Direction inverting (MK3S stock)
 #define INVERT_X_DIR  1
@@ -123,6 +126,15 @@
  * --------------------------------------------------- */
 #define LONG_PRESS_TIME      1000  // ms for long-press detection
 #define BUTTON_BLANKING_TIME  200  // ms debounce after button release
+
+/* ---------------------------------------------------
+ * Tool carousel angular positions
+ * Degrees from PINDA home (gap centre) to each tool holder.
+ * Adjust if the physical carousel spacing differs from 120°.
+ * --------------------------------------------------- */
+#define TOOL_A_DEG    0.0f
+#define TOOL_B_DEG  120.0f
+#define TOOL_C_DEG  -120.0f
 
 /* ---------------------------------------------------
  * TMC2130 stepper driver settings (copied from MK3S.h)

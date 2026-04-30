@@ -33,7 +33,7 @@ void motion_init();
  * Drives each selected axis toward its min endstop at HOMING_FEEDRATE,
  * then backs off 2 mm and sets the planner position to 0.
  */
-void motion_home(uint8_t axes_mask);
+bool motion_home(uint8_t axes_mask);
 
 /**
  * Queue a linear move.
@@ -83,3 +83,27 @@ void motion_enable();
  * @param axis  0=X, 1=Y, 2=Z, 3=E
  */
 float motion_get_position_mm(uint8_t axis);
+
+/**
+ * Return the active steps-per-unit value for one axis (read from EEPROM/cs).
+ * For the X axis this is steps-per-degree; for Y/Z it is steps-per-mm.
+ * @param axis  0=X, 1=Y, 2=Z, 3=E
+ */
+float motion_get_steps_per_unit(uint8_t axis);
+
+bool motion_set_steps_per_unit(uint8_t axis, float steps_per_mm);
+
+/**
+ * Home X axis (PINDA center-finding) then rotate to the preset angle for
+ * the requested tool.
+ * @param tool  1=A, 2=B, 3=C
+ * @return true on success; false if PINDA home failed
+ * On failure, current tool is reset to 0 (unknown).
+ */
+bool motion_go_to_tool(uint8_t tool);
+
+/**
+ * Return the index of the currently selected tool.
+ * @return 0=none/unknown, 1=A, 2=B, 3=C
+ */
+uint8_t motion_get_current_tool();

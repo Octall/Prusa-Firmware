@@ -20,3 +20,6 @@ rm -rf build/CMakeCache.txt build/CMakeFiles
 
 cmake -B build -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE"
 cmake --build build --target ToolIndexer_ENGLISH
+
+avrdude -p m2560 -c stk500v2 -P /dev/ttyACM0 -b 115200 -D   -U flash:w:build/ToolIndexer_ENGLISH.hex:i
+

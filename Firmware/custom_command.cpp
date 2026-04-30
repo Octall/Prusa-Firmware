@@ -19,17 +19,38 @@
 // Maximum line length (bytes, including '\0')
 #define CMD_BUF_LEN 80
 
-static char  cmd_buf[CMD_BUF_LEN];
+static char    cmd_buf[CMD_BUF_LEN];
 static uint8_t cmd_len = 0;
 
+// Line-number tag extracted from the current command (0 = not present).
+// Sent back verbatim in every OK/ERROR reply so the host can correlate.
+// Syntax: optional "N<uint16>" as the very first token on the line,
+// e.g.  "N42 TOOL A"  →  reply "OK N42"
+static uint16_t g_seq = 0;
+static bool     g_has_seq = false;
+
 // ---------------------------------------------------------------------------
-// Helper: send OK or ERROR over serial
+// Helper: send OK or ERROR over serial, echoing sequence number when present
 // ---------------------------------------------------------------------------
-static void reply_ok()    { MYSERIAL.print("OK\r\n"); }
+static void reply_ok()
+{
+    if (g_has_seq) {
+        MYSERIAL.print("OK N");
+        MYSERIAL.print(g_seq);
+        MYSERIAL.print("\r\n");
+    } else {
+        MYSERIAL.print("OK\r\n");
+    }
+}
+
 static void reply_error(const char *reason)
 {
     MYSERIAL.print("ERROR ");
     MYSERIAL.print(reason);
+    if (g_has_seq) {
+        MYSERIAL.print(" N");
+        MYSERIAL.print(g_seq);
+    }
     MYSERIAL.print("\r\n");
 }
 
@@ -85,7 +106,11 @@ static void cmd_home(const char *args)
         if (c == 'X') do_x = true;
         if (c == 'Y') do_y = true;
         if (c == 'Z') do_z = true;
-        if (c == 'A') { do_x = true; do_y = true; do_z = true; } // ALL
+        if (c == 'A') { 
+            do_x = true; 
+            //do_y = true;
+            //do_z = true; 
+            } // ALL
     }
 
     uint8_t mask = 0;
@@ -94,7 +119,11 @@ static void cmd_home(const char *args)
     if (do_z) mask |= AXIS_Z;
 
     display_set_status("Homing...");
-    motion_home(mask);
+    if (!motion_home(mask)) {
+        display_set_status("Home failed");
+        reply_error("PINDA home failed");
+        return;
+    }
     display_set_status("Ready");
     reply_ok();
 }
@@ -115,6 +144,7 @@ static void cmd_move(const char *args)
     }
 
     motion_move(x, y, z, e, isnan(f) ? 0.0f : f);
+    motion_wait();
     reply_ok();
 }
 
@@ -213,6 +243,33 @@ static void cmd_status(const char *)
     MYSERIAL.print(sensor_read_endstop_z() ? 1 : 0);
     MYSERIAL.print("\r\n");
 
+    MYSERIAL.print("CONFIG X_STEPS_PER_DEG=");
+    MYSERIAL.print(motion_get_steps_per_unit(0), 2);
+    MYSERIAL.print("\r\n");
+
+    {
+        uint8_t t = motion_get_current_tool();
+        MYSERIAL.print("TOOL ");
+        MYSERIAL.print(t == 1 ? "A" : t == 2 ? "B" : t == 3 ? "C" : "NONE");
+        MYSERIAL.print("\r\n");
+    }
+
+    reply_ok();
+}
+
+static void cmd_set_steps_per_unit(const char *args)
+{
+    float val = parse_arg('X', args);
+    if (isnan(val) || val <= 0.0f)
+    {
+        reply_error("invalid X steps per unit");
+        return;
+    }
+    if (!motion_set_steps_per_unit(0, val))
+    {
+        reply_error("failed to set steps per unit");
+        return;
+    }
     reply_ok();
 }
 
@@ -228,6 +285,32 @@ static void cmd_rotate(const char *args)
     }
 
     motion_rotate_x_deg(deg, isnan(f) ? 0.0f : f);
+    motion_wait();
+    reply_ok();
+}
+
+static void cmd_tool(const char *args)
+{
+    while (*args == ' ') args++;
+    char c = toupper((uint8_t)*args);
+    uint8_t tool = 0;
+    if      (c == 'A') tool = 1;
+    else if (c == 'B') tool = 2;
+    else if (c == 'C') tool = 3;
+    else { reply_error("tool must be A, B, or C"); return; }
+
+    char msg[21];
+    snprintf(msg, sizeof(msg), "Selecting %c...", c);
+    display_set_status(msg);
+
+    if (!motion_go_to_tool(tool)) {
+        display_set_status("Tool select failed");
+        reply_error("PINDA verify failed");
+        return;
+    }
+
+    snprintf(msg, sizeof(msg), "Tool: %c", c);
+    display_set_status(msg);
     reply_ok();
 }
 
@@ -251,6 +334,23 @@ static void dispatch(char *line)
 
     if (len == 0) return; // blank line — ignore silently
 
+    // Strip optional leading sequence number: N<digits> ...
+    // e.g. "N42 TOOL A" → g_seq=42, line advances to "TOOL A"
+    g_has_seq = false;
+    g_seq = 0;
+    if (toupper((uint8_t)line[0]) == 'N' && isdigit((uint8_t)line[1])) {
+        char *end;
+        unsigned long n = strtoul(line + 1, &end, 10);
+        if (end != line + 1 && (*end == ' ' || *end == '\0')) {
+            g_seq = (uint16_t)n;
+            g_has_seq = true;
+            line = end;
+            while (*line == ' ') line++;
+            len = strlen(line);
+            if (len == 0) return; // bare "N42" with no command
+        }
+    }
+
     // Command word is everything up to the first space
     char *args = strchr(line, ' ');
     if (args) {
@@ -272,6 +372,8 @@ static void dispatch(char *line)
     else if (strcmp(line, "READ")   == 0) cmd_read(args);
     else if (strcmp(line, "STATUS") == 0) cmd_status(args);
     else if (strcmp(line, "LCD")    == 0) cmd_lcd(args);
+    else if (strcmp(line, "SET_STEPS_PER_UNIT") == 0) cmd_set_steps_per_unit(args);
+    else if (strcmp(line, "TOOL")           == 0) cmd_tool(args);
     else                                   reply_error("unknown command");
 }
 

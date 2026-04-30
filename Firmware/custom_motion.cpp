@@ -24,6 +24,9 @@
 // Current logical position in mm (maintained locally; mirrors planner state)
 static float current_pos[NUM_AXIS] = {0.0f, 0.0f, 0.0f, 0.0f};
 
+// Currently selected tool: 0=none/unknown, 1=A, 2=B, 3=C
+static uint8_t current_tool = 0;
+
 // Feedrate used internally when not specified (mm/min)
 #define DEFAULT_MOVE_FEEDRATE  3000.0f
 
@@ -32,6 +35,10 @@ static float current_pos[NUM_AXIS] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 // Back-off distance after hitting an endstop during homing (mm)
 #define HOMING_BACKOFF_MM  2.0f
+
+// PINDA center-finding scan parameters
+#define PINDA_SCAN_FEEDRATE  300.0f   // deg/min (slow for edge accuracy)
+#define PINDA_MAX_SCAN_DEG   400.0f   // abort after one full rev + margin
 
 // ---------------------------------------------------------------------------
 // homing_feedrate[] is defined as constexpr in Marlin.h — use it directly
@@ -113,12 +120,83 @@ static void home_single_axis(uint8_t axis)
                      current_pos[Z_AXIS], current_pos[E_AXIS]);
 }
 
-void motion_home(uint8_t axes_mask)
+static bool motion_home_pinda_x()
 {
-    if (axes_mask & AXIS_X) home_single_axis(X_AXIS);
+    float spm = cs.axis_steps_per_mm[X_AXIS];
+    if (spm < 1.0f) spm = 200.0f;
+
+    const float steps_per_sec = (PINDA_SCAN_FEEDRATE / 60.0f) * spm;
+    const uint16_t half_us = (uint16_t)constrain(500000.0f / steps_per_sec, 2.0f, 65535.0f);
+    const long max_steps = (long)(spm * PINDA_MAX_SCAN_DEG);
+
+    st_synchronize();
+    WRITE(X_ENABLE_PIN, X_ENABLE_ON);  // ensure motor is driven before bypassing ISR
+    DISABLE_STEPPER_DRIVER_INTERRUPT();
+
+    // If already in the non-triggered gap, back off until PINDA triggers
+    if (!sensor_read_pinda()) {
+        WRITE(X_DIR_PIN, INVERT_X_DIR);
+        delayMicroseconds(2);
+        for (long i = 0; i < max_steps; i++) {
+            WRITE(X_STEP_PIN, !INVERT_X_STEP_PIN);
+            delayMicroseconds(half_us);
+            WRITE(X_STEP_PIN, INVERT_X_STEP_PIN);
+            delayMicroseconds(half_us);
+            if (sensor_read_pinda()) break;
+        }
+    }
+
+    // Scan forward, find falling edge (enter gap) then rising edge (exit gap)
+    WRITE(X_DIR_PIN, !INVERT_X_DIR);
+    delayMicroseconds(2);
+
+    long enter_step = -1, exit_step = -1;
+    for (long i = 0; i < max_steps; i++) {
+        WRITE(X_STEP_PIN, !INVERT_X_STEP_PIN);
+        delayMicroseconds(half_us);
+        WRITE(X_STEP_PIN, INVERT_X_STEP_PIN);
+        delayMicroseconds(half_us);
+
+        if (enter_step < 0 && !sensor_read_pinda()) { enter_step = i; continue; }
+        if (enter_step >= 0 && sensor_read_pinda())  { exit_step  = i; break; }
+    }
+
+    ENABLE_STEPPER_DRIVER_INTERRUPT();
+
+    if (enter_step < 0 || exit_step < 0) return false;
+
+    // We are now at exit_step; back up to the midpoint
+    const long back_steps = (exit_step - enter_step) / 2;
+    DISABLE_STEPPER_DRIVER_INTERRUPT();
+    WRITE(X_DIR_PIN, INVERT_X_DIR);
+    delayMicroseconds(2);
+    for (long i = 0; i < back_steps; i++) {
+        WRITE(X_STEP_PIN, !INVERT_X_STEP_PIN);
+        delayMicroseconds(half_us);
+        WRITE(X_STEP_PIN, INVERT_X_STEP_PIN);
+        delayMicroseconds(half_us);
+    }
+    ENABLE_STEPPER_DRIVER_INTERRUPT();
+
+    // Declare center as position 0°
+    current_pos[X_AXIS] = 0.0f;
+    long sp[NUM_AXIS];
+    for (uint8_t i = 0; i < NUM_AXIS; i++)
+        sp[i] = lround(current_pos[i] * cs.axis_steps_per_mm[i]);
+    st_set_position(sp);
+    plan_set_position(current_pos[X_AXIS], current_pos[Y_AXIS],
+                      current_pos[Z_AXIS], current_pos[E_AXIS]);
+    return true;
+}
+
+bool motion_home(uint8_t axes_mask)
+{
+    bool ok = true;
+    if (axes_mask & AXIS_X) { if (!motion_home_pinda_x()) ok = false; }
     if (axes_mask & AXIS_Y) home_single_axis(Y_AXIS);
     if (axes_mask & AXIS_Z) home_single_axis(Z_AXIS);
     // E cannot be homed
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,16 +234,16 @@ void motion_rotate_x_deg(float degrees, float feedrate_mm_min)
 {
     if (feedrate_mm_min <= 0.0f) feedrate_mm_min = homing_feedrate[X_AXIS];
 
-    // Steps = degrees × (steps per revolution / 360)
-    // NEMA17 1.8° motor: 200 full steps × 16× microstepping = 3200 steps/rev
-    const long steps = lround(
-        fabsf(degrees) * ((float)X_MOTOR_FULL_STEPS_PER_REV * TMC2130_USTEPS_XY) / 360.0f);
+    // Use the calibrated axis_steps_per_mm value as steps-per-degree for X.
+    // This accounts for the full drive chain (motor + gearbox) and is set via
+    // DEFAULT_AXIS_STEPS_PER_UNIT[X] in ToolIndexer.h.
+    float spm = cs.axis_steps_per_mm[X_AXIS];
+    if (spm < 1.0f) spm = 200.0f; // guard against blank EEPROM; matches DEFAULT_AXIS_STEPS_PER_UNIT[X]
+
+    const long steps = lround(fabsf(degrees) * spm);
     if (steps == 0) return;
 
-    // Step half-period in μs, derived from feedrate and hardcoded X steps/mm (100).
-    // Using a compile-time constant here intentionally avoids any EEPROM dependency
-    // that could silently produce a near-zero delta_mm and stall the planner.
-    const float steps_per_sec = (feedrate_mm_min / 60.0f) * 100.0f;
+    const float steps_per_sec = (feedrate_mm_min / 60.0f) * spm;
     const uint16_t half_us = (uint16_t)constrain(500000.0f / steps_per_sec, 2.0f, 65535.0f);
 
     // Drain any queued planner moves, then take direct control of the step/dir pins.
@@ -183,12 +261,9 @@ void motion_rotate_x_deg(float degrees, float feedrate_mm_min)
         delayMicroseconds(half_us);
     }
 
-    // Bring planner and stepper position counters in sync with the physical move.
-    float spm = cs.axis_steps_per_mm[X_AXIS];
-    if (spm < 1.0f) spm = 100.0f; // guard against uninitialised EEPROM
-    current_pos[X_AXIS] += degrees
-        * ((float)X_MOTOR_FULL_STEPS_PER_REV * TMC2130_USTEPS_XY)
-        / (360.0f * spm);
+    // current_pos[X_AXIS] tracks position in degrees (1 unit = 1 degree).
+    // st_set_position converts back to steps via axis_steps_per_mm.
+    current_pos[X_AXIS] += degrees;
     long sp[NUM_AXIS];
     for (uint8_t i = 0; i < NUM_AXIS; i++)
         sp[i] = lround(current_pos[i] * cs.axis_steps_per_mm[i]);
@@ -234,8 +309,45 @@ void motion_enable()
 
 // ---------------------------------------------------------------------------
 
+uint8_t motion_get_current_tool() { return current_tool; }
+
+bool motion_go_to_tool(uint8_t tool)
+{
+    const float tool_angles[4] = { 0.0f, TOOL_A_DEG, TOOL_B_DEG, TOOL_C_DEG };
+    if (tool < 1 || tool > 3) return false;
+
+    current_tool = 0;  // unknown until motion succeeds
+
+    // Move to the absolute target angle from current tracked position.
+    // Caller is responsible for homing X before the first TOOL command so
+    // current_pos[X_AXIS] is a reliable reference.
+    float delta = tool_angles[tool] - current_pos[X_AXIS];
+    if (delta != 0.0f)
+        motion_rotate_x_deg(delta, DEFAULT_MOVE_FEEDRATE);
+
+    // Verify position: at each tool holder centre the PINDA sits in the
+    // non-metal gap, so it must NOT be triggered.
+    if (sensor_read_pinda()) return false;
+
+    current_tool = tool;
+    return true;
+}
+
 float motion_get_position_mm(uint8_t axis)
 {
     if (axis >= NUM_AXIS) return 0.0f;
     return current_pos[axis];
+}
+
+float motion_get_steps_per_unit(uint8_t axis)
+{
+    if (axis >= NUM_AXIS) return 0.0f;
+    return cs.axis_steps_per_mm[axis];
+}
+
+bool motion_set_steps_per_unit(uint8_t axis, float steps_per_mm)
+{
+    if (axis >= NUM_AXIS || steps_per_mm <= 0.0f) return false;
+    cs.axis_steps_per_mm[axis] = steps_per_mm;
+    return true;
 }
